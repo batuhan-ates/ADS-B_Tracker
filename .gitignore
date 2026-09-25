@@ -1,0 +1,15 @@
+# Sanal Ortam 
+.venv/
+venv/
+
+# Python Önbellek Dosyaları
+__pycache__/
+*.pyc
+
+# Ham Veri Dosyaları (Büyük ikili dosyaları repoda tutmuyoruz)
+*.bin
+data/*.bin
+
+# Geçici Test veya Sistem Dosyaları
+.vscode/
+*.log
