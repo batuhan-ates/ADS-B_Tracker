@@ -95,3 +95,4 @@ def bits_to_hex(bits: list[int]) -> str:
     # Her 4 biti 1 hex karakterine çevir
     hex_str = "".join(f"{int(bit_str[i:i+4], 2):X}" for i in range(0, len(bit_str), 4))
     return hex_str
+

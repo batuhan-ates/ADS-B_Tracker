@@ -1,7 +1,11 @@
 import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import numpy as np
 import matplotlib.pyplot as plt
-from dsp import raw_bytes_to_iq, calculate_magnitude
+from src.dsp import raw_bytes_to_iq, calculate_magnitude
 
 SAMPLE_FILE = "data/sample.bin"
 SAMPLE_RATE = 2.0e6  # 2.0 MSPS (1 örnek = 0.5 mikrosaniye)

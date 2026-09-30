@@ -2,6 +2,7 @@ import sys
 import os
 from src.dsp import raw_bytes_to_iq, calculate_magnitude
 from src.demodulator import find_preambles, demodulate_ppm, bits_to_hex
+from src.decoder import extract_downlink_format, verify_crc
 
 SAMPLE_FILE = "data/sample.bin"
 
@@ -32,13 +33,14 @@ def main():
         bits = demodulate_ppm(magnitude, p_idx)
         hex_msg = bits_to_hex(bits)
         
-        # İlk 5 bit Downlink Format (DF) değerini verir
-        df = int("".join(str(b) for b in bits[:5]), 2)
-        
-        print(f"--- Paket #{idx} (Örnek İndeksi: {p_idx:,}) ---")
-        print(f"Downlink Format (DF) : DF{df}")
-        print(f"112-Bit Hex Mesajı    : {hex_msg}")
-        print(f"İlk 32 Bit (DF+CA+ICAO): {''.join(str(b) for b in bits[:32])}\n")
+        # Downlink Format (İlk 5 bit) kontrolü
+        df = extract_downlink_format(bits)
+
+        # DF 17 mi ve CRC tutuyor mu?
+        if df == 17 and verify_crc(bits):
+            hex_msg = bits_to_hex(bits)
+            print(f"✈️  [DOĞRULANMIŞ UÇAK] Örnek İndeksi: {p_idx:,}")
+            print(f"    112-Bit Hex: {hex_msg}\n")
 
 if __name__ == "__main__":
     main()
