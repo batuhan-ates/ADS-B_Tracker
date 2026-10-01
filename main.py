@@ -2,7 +2,7 @@ import sys
 import os
 from src.dsp import raw_bytes_to_iq, calculate_magnitude
 from src.demodulator import find_preambles, demodulate_ppm, bits_to_hex
-from src.decoder import extract_downlink_format, verify_crc
+from src.decoder import extract_downlink_format, verify_crc, extract_icao, extract_type_code, parse_df17
 
 SAMPLE_FILE = "data/sample.bin"
 
@@ -28,6 +28,7 @@ def main():
     preambles = find_preambles(magnitude, snr_threshold=3.0)
     print(f"[+] Toplam {len(preambles)} adet ADS-B mesajı yakalandı.\n")
 
+    valid_plane_count = 0
 # 4. PPM Bit Slicer ve Hex Çözümleme
     for idx, p_idx in enumerate(preambles, start=1):
         bits = demodulate_ppm(magnitude, p_idx)
@@ -38,9 +39,26 @@ def main():
 
         # DF 17 mi ve CRC tutuyor mu?
         if df == 17 and verify_crc(bits):
+
+            valid_plane_count += 1
+            plane_info = parse_df17(bits)
             hex_msg = bits_to_hex(bits)
+            icao = extract_icao(bits)
+            tc = extract_type_code(bits)
+            
             print(f"✈️  [DOĞRULANMIŞ UÇAK] Örnek İndeksi: {p_idx:,}")
             print(f"    112-Bit Hex: {hex_msg}\n")
+            print(f"    ICAO Adresi : {icao}")
+            print(f"    Type Code   : {tc}")
+            print(f"    Paket Türü  : {plane_info['msg_type']}\n")
+
+            if plane_info.get("altitude_ft") is not None:
+                alt = plane_info["altitude_ft"]
+                alt_m = int(alt * 0.3048)
+                print(f"    İrtifa      : {alt:,} ft ({alt_m:,} m)")
+                print(f"    CPR Format  : {plane_info['cpr_type']}\n")
+            else:
+                print(f"    (Bu paket irtifa bilgisi taşımıyor)\n")
 
 if __name__ == "__main__":
     main()

@@ -49,3 +49,129 @@ def verify_crc(bits: list[int]) -> bool:
         actual_parity = (actual_parity << 1) | b
         
     return calculated_crc == actual_parity
+
+def extract_icao(bits: list[int]) -> str:
+    """112 bitlik ADS-B mesajından 24 bitlik ICAO adresini
+
+    ayıklar ve 6 haneli Hexadecimal (büyük harf) metin olarak döner.
+    Örnek: '4B2A66' veya '507CAB'
+    """
+    # 8. bitten 32. bite kadar olan 24 biti al
+    icao_bits = bits[8:32]
+
+    # 1 ve 0'ları yan yana getirip ikilik tabandaki metni oluştur
+    icao_str = "".join(str(b) for b in icao_bits)
+
+    # İkilik tabandan tamsayıya, oradan da 6 haneli büyük harfli Hex'e çevir
+    icao_hex = f"{int(icao_str, 2):06X}"
+
+    return icao_hex
+
+
+def extract_type_code(bits: list[int]) -> int:
+    """112 bitlik ADS-B mesajının ME alanından ilk 5 biti (Bit 32-36)
+
+    okuyarak Type Code (TC / Tip Kodu) değerini tamsayı olarak döner.
+    """
+    # 32. bitten 37. bite kadar olan 5 biti al
+    tc_bits = bits[32:37]
+
+    # İkilik dizgiyi tamsayıya çevir
+    tc_str = "".join(str(b) for b in tc_bits)
+    type_code = int(tc_str, 2)
+
+    return type_code
+
+# --- ALT ÇÖZÜCÜLER (GÖVDE / PAYLOAD DECODERS) ---
+
+
+def decode_callsign(bits: list[int]) -> dict:
+    """TC 1-4: Uçağın Çağrı Adını (Callsign / Flight Number) çözer.
+
+    (Şimdilik taslak, bir sonraki adımda 6-bit karakter tablosunu ekleyeceğiz)
+    """
+    return {"msg_type": "Aircraft Identification", "callsign": "PARSING_SOON"}
+
+def decode_altitude(bits: list[int]) -> int | None:
+  """40-51 bitleri arasındaki 12 bitlik barometrik irtifayı
+
+  feet cinsine dönüştürür (ICAO Doc 9871).
+  """
+  # İrtifa alanı tüm pakette 40 ile 52. bitler arasıdır (12 bit)
+  alt_bits = bits[40:52]
+
+  # 47. bit (alt_bits'in 7. indeksi) Q-bitidir
+  q_bit = alt_bits[7]
+
+  if q_bit == 1:
+    # Q-bitini (7. indeksi) çıkarıp kalan 11 biti birleştir
+    n_bits = alt_bits[:7] + alt_bits[8:]
+    n = int("".join(str(b) for b in n_bits), 2)
+
+    # Standart ICAO Formülü
+    altitude_ft = (n * 25) - 1000
+    return altitude_ft
+  else:
+    # Gillham / Gray Code
+    return None
+
+
+def decode_airborne_position(bits: list[int]) -> dict:
+  """TC 9-18: Havada Konum paketinden İrtifa ve CPR verilerini ayıklar."""
+  altitude = decode_altitude(bits)
+
+  # Bit 53: CPR Formatı (0: Even / Çift, 1: Odd / Tek)
+  cpr_flag = bits[53]
+  cpr_type = "Odd" if cpr_flag == 1 else "Even"
+
+  # Bit 54-70: 17-bitlik CPR Enlem (Latitude)
+  cpr_lat = int("".join(str(b) for b in bits[54:71]), 2)
+
+  # Bit 71-87: 17-bitlik CPR Boylam (Longitude)
+  cpr_lon = int("".join(str(b) for b in bits[71:88]), 2)
+
+  return {
+      "msg_type": "Airborne Position",
+      "altitude_ft": altitude,
+      "cpr_type": cpr_type,
+      "cpr_lat": cpr_lat,
+      "cpr_lon": cpr_lon,
+  }
+
+def decode_velocity(bits: list[int]) -> dict:
+    """TC 19: Uçağın yer süratini (ground speed), yön açısını (heading)
+
+    ve dikey tırmanış/alçalış hızını çözer.
+    """
+    return {"msg_type": "Airborne Velocity"}
+
+
+# --- ANA YÖNLENDİRİCİ FONKSİYON (ROUTER) ---
+
+
+def parse_df17(bits: list[int]) -> dict:
+    """DF17 mesajını alır; ICAO kimliğini ve Type Code'u (TC) ayıklar.
+
+    TC değerine göre ilgili çözücü fonksiyona yönlendirir ve
+    tüm bilgileri tek bir sözlükte (dict) birleştirip döner.
+    """
+    icao = extract_icao(bits)
+    tc = extract_type_code(bits)
+
+    # Temel uçak paketi bilgisi
+    parsed_data = {"icao": icao, "type_code": tc, "msg_type": "Unknown / Other"}
+
+    # TC değerine göre akıllı yönlendirme
+    if 1 <= tc <= 4:
+        payload_data = decode_callsign(bits)
+        parsed_data.update(payload_data)
+
+    elif 9 <= tc <= 18:
+        payload_data = decode_airborne_position(bits)
+        parsed_data.update(payload_data)
+
+    elif tc == 19:
+        payload_data = decode_velocity(bits)
+        parsed_data.update(payload_data)
+
+    return parsed_data
