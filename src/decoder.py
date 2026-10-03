@@ -125,10 +125,12 @@ def decode_airborne_position(bits: list[int]) -> dict:
   cpr_type = "Odd" if cpr_flag == 1 else "Even"
 
   # Bit 54-70: 17-bitlik CPR Enlem (Latitude)
-  cpr_lat = int("".join(str(b) for b in bits[54:71]), 2)
+  cpr_lat_str = "".join(str(b) for b in bits[54:71])
+  cpr_lat = int(cpr_lat_str, 2)
 
   # Bit 71-87: 17-bitlik CPR Boylam (Longitude)
-  cpr_lon = int("".join(str(b) for b in bits[71:88]), 2)
+  cpr_lon_str = "".join(str(b) for b in bits[71:88])
+  cpr_lon = int(cpr_lon_str, 2)
 
   return {
       "msg_type": "Airborne Position",
@@ -136,6 +138,8 @@ def decode_airborne_position(bits: list[int]) -> dict:
       "cpr_type": cpr_type,
       "cpr_lat": cpr_lat,
       "cpr_lon": cpr_lon,
+      "cpr_lat_norm": cpr_lat / 131072.0,
+      "cpr_lon_norm": cpr_lon / 131072.0,
   }
 
 def decode_velocity(bits: list[int]) -> dict:
