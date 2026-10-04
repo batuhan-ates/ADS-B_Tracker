@@ -1,4 +1,5 @@
 # src/decoder.py
+import math
 
 GENERATOR_POLY = 0xFFFA0480
 
@@ -84,13 +85,37 @@ def extract_type_code(bits: list[int]) -> int:
 
 # --- ALT ÇÖZÜCÜLER (GÖVDE / PAYLOAD DECODERS) ---
 
+# ICAO Doc 9871 standardı 6-bit karakter tablosu (64 eleman)
+CALLSIGN_CHARS = (
+    "#ABCDEFGHIJKLMNOPQRSTUVWXYZ##### "
+    "###############0123456789######"
+)
 
 def decode_callsign(bits: list[int]) -> dict:
-    """TC 1-4: Uçağın Çağrı Adını (Callsign / Flight Number) çözer.
-
-    (Şimdilik taslak, bir sonraki adımda 6-bit karakter tablosunu ekleyeceğiz)
     """
-    return {"msg_type": "Aircraft Identification", "callsign": "PARSING_SOON"}
+    TC 1-4: 112 bitlik ADS-B mesajından uçağın 8 karakterlik 
+    Çağrı Adını (Callsign / Flight Number) ayrıştırır.
+    """
+    # 40 ile 88. bitler arasındaki 48 biti al
+    cs_bits = bits[40:88]
+    callsign = []
+
+    # 48 biti 6'şar bitlik 8 parçaya böl
+    for i in range(8):
+        chunk = cs_bits[i * 6 : (i + 1) * 6]
+        val = int("".join(str(b) for b in chunk), 2)
+        
+        # Karakter tablosundan harfi/rakamı çek
+        char = CALLSIGN_CHARS[val]
+        callsign.append(char)
+
+    # Sondaki dolgu boşluklarını ve geçersiz karakterleri temizle
+    flight_id = "".join(callsign).replace("#", "").strip()
+
+    return {
+        "msg_type": "Aircraft Identification",
+        "callsign": flight_id
+    }
 
 def decode_altitude(bits: list[int]) -> int | None:
   """40-51 bitleri arasındaki 12 bitlik barometrik irtifayı
@@ -143,13 +168,59 @@ def decode_airborne_position(bits: list[int]) -> dict:
   }
 
 def decode_velocity(bits: list[int]) -> dict:
-    """TC 19: Uçağın yer süratini (ground speed), yön açısını (heading)
-
-    ve dikey tırmanış/alçalış hızını çözer.
     """
-    return {"msg_type": "Airborne Velocity"}
+    TC 19: Havada Hız (Airborne Velocity) telemetrisini ayrıştırır (ICAO Doc 9871).
+    Yer sürati (knot), rota açısı (derece) ve dikey hızı (ft/dak) döner.
+    """
+    subtype = int("".join(str(b) for b in bits[37:40]), 2)
+    
+    # Subtype 1 & 2: Yer Sürati (Ground Speed)
+    if subtype in (1, 2):
+        # 1. Doğu-Batı Hız Bileşeni (V_ew) -> Bit 45: Yön, Bit 46-55: Değer
+        ew_sign = bits[45]
+        v_ew_raw = int("".join(str(b) for b in bits[46:56]), 2)
+        v_ew = (v_ew_raw - 1) if v_ew_raw > 0 else 0
+        v_x = -v_ew if ew_sign == 1 else v_ew
 
+        # 2. Kuzey-Güney Hız Bileşeni (V_ns) -> Bit 56: Yön, Bit 57-66: Değer
+        ns_sign = bits[56]
+        v_ns_raw = int("".join(str(b) for b in bits[57:67]), 2)
+        v_ns = (v_ns_raw - 1) if v_ns_raw > 0 else 0
+        v_y = -v_ns if ns_sign == 1 else v_ns
 
+        # 3. Bileşke Yer Sürati (Ground Speed)
+        speed = round(math.sqrt(v_x**2 + v_y**2))
+
+        # 4. Pusula Rota Açısı (Track / Heading)
+        heading = 0.0
+        if speed > 0:
+            track = math.degrees(math.atan2(v_x, v_y))
+            if track < 0:
+                track += 360.0
+            heading = round(track, 1)
+
+        # 5. Dikey Hız (Vertical Rate) -> Bit 68: Yön, Bit 69-77: Değer
+        vr_sign = bits[68]
+        vr_raw = int("".join(str(b) for b in bits[69:78]), 2)
+        vertical_rate = 0
+        if vr_raw > 0:
+            rate = (vr_raw - 1) * 64
+            vertical_rate = -rate if vr_sign == 1 else rate
+
+        return {
+            "msg_type": "Airborne Velocity",
+            "subtype": subtype,
+            "speed_kts": speed,
+            "speed_kmh": round(speed * 1.852),
+            "heading_deg": heading,
+            "vertical_rate_fpm": vertical_rate
+        }
+
+    return {
+        "msg_type": "Airborne Velocity",
+        "subtype": subtype,
+        "note": "Airspeed formatı şimdilik desteklenmiyor."
+    }
 # --- ANA YÖNLENDİRİCİ FONKSİYON (ROUTER) ---
 
 
@@ -179,3 +250,4 @@ def parse_df17(bits: list[int]) -> dict:
         parsed_data.update(payload_data)
 
     return parsed_data
+

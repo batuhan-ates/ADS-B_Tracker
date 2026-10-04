@@ -3,8 +3,8 @@ import time
 from rtlsdr import RtlSdr
 
 def record_raw_samples(
-    output_path: str = "data/sample.bin",
-    duration_sec: float = 2.0,
+    output_path: str = "data/sample_long",
+    duration_sec: float = 10.0,
     sample_rate: float = 2.0e6,
     center_freq: float = 1090e6,
     gain: float = 38.6
@@ -49,4 +49,4 @@ def record_raw_samples(
 
 if __name__ == "__main__":
     # 2 saniyelik test kaydı al (yaklaşık 8 MB veri üretir)
-    record_raw_samples(output_path="data/sample.bin", duration_sec=2.0)
+    record_raw_samples(output_path="data/sample_long.bin", duration_sec=10.0)

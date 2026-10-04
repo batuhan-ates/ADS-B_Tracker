@@ -2,10 +2,10 @@ import sys
 import os
 from src.dsp import raw_bytes_to_iq, calculate_magnitude
 from src.demodulator import find_preambles, demodulate_ppm, bits_to_hex
-from src.decoder import extract_downlink_format, verify_crc, extract_icao, extract_type_code, parse_df17
+from src.decoder import extract_downlink_format, verify_crc, extract_icao, extract_type_code, parse_df17, decode_callsign
 from src.cpr import decode_cpr_airborne
 
-SAMPLE_FILE = "data/sample.bin"
+SAMPLE_FILE = "data/sample_long.bin"
 
 # Uçakların Even/Odd paketlerini tutacağımız dinamik hafıza
 aircraft_db = {}
@@ -43,24 +43,38 @@ def main():
         # 1. KAPI: Sadece DF17 VE CRC hatasız olan gerçek uçaklar girer!
         # -------------------------------------------------------------
         if df == 17 and verify_crc(bits):
+            valid_plane_count += 1
             plane_info = parse_df17(bits)
+            hex_msg = bits_to_hex(bits)
 
-            # Geçici TC=12 Filtresi (1. Kapının içinde!)
-            if plane_info["type_code"] == 12:
-                valid_plane_count += 1
-                hex_msg = bits_to_hex(bits)
+            # Temel uçak ve squitter başlığı (Her geçerli pakette basılır)
+            print(f"✈️  [DOĞRULANMIŞ UÇAK #{valid_plane_count}] Örnek İndeksi: {p_idx:,}")
+            print(f"    112-Bit Hex : {hex_msg}")
+            print(f"    ICAO Adresi : {plane_info['icao']}")
+            print(f"    Type Code   : {plane_info['type_code']}")
+            print(f"    Paket Türü  : {plane_info['msg_type']}")
 
-                print(f"✈️  [TC=12 KONUM PAKETİ #{valid_plane_count}] Örnek İndeksi: {p_idx:,}")
-                print(f"    112-Bit Hex : {hex_msg}")
-                print(f"    ICAO Adresi : {plane_info['icao']}")
-                print(f"    Type Code   : {plane_info['type_code']}")
-                print(f"    Paket Türü  : {plane_info['msg_type']}")
-                print(f"    İrtifa      : {plane_info.get('altitude_ft')} ft")
+            # ---------------------------------------------------------
+            # ÖZEL ALAN 1: Callsign (Uçuş Kodu / TC 1-4) Varsa Yazdır
+            # ---------------------------------------------------------
+            if plane_info.get("callsign"):
+                print(f"    Çağrı Adı   : {plane_info['callsign']}")
+
+            # ---------------------------------------------------------
+            # ÖZEL ALAN 2: İrtifa Varsa Yazdır
+            # ---------------------------------------------------------
+            if plane_info.get("altitude_ft") is not None:
+                alt = plane_info["altitude_ft"]
+                alt_m = int(alt * 0.3048)
+                print(f"    İrtifa      : {alt:,} ft ({alt_m:,} m)")
                 print(f"    CPR Format  : {plane_info.get('cpr_type')}")
                 print(f"    Ham CPR Lat : {plane_info.get('cpr_lat')}")
                 print(f"    Ham CPR Lon : {plane_info.get('cpr_lon')}")
 
-                # CPR Durum Takibi (1. Kapının içinde!)
+            # ---------------------------------------------------------
+            # ÖZEL ALAN 3: Havada Konum (TC 9-18) ve CPR Durum Takibi
+            # ---------------------------------------------------------
+            if plane_info.get("msg_type") == "Airborne Position":
                 icao = plane_info["icao"]
                 cpr_type = plane_info["cpr_type"].lower()
 
@@ -69,7 +83,7 @@ def main():
 
                 aircraft_db[icao][cpr_type] = plane_info
 
-                # İki kare birikti mi kontrolü
+                # İki zıt kare (Even ve Odd) birikti mi kontrolü
                 if "even" in aircraft_db[icao] and "odd" in aircraft_db[icao]:
                     even_pkt = aircraft_db[icao]["even"]
                     odd_pkt = aircraft_db[icao]["odd"]
@@ -85,7 +99,21 @@ def main():
                 else:
                     print(f"    ⏳ [BEKLİYOR] Şimdilik sadece '{cpr_type.upper()}' karesi geldi. Zıt kare bekleniyor...")
 
-                print()
+            # ---------------------------------------------------------
+            # ÖZEL ALAN 4: Hız ve Rota (TC 19) Varsa Yazdır
+            # ---------------------------------------------------------
+            if plane_info.get("msg_type") == "Airborne Velocity" and "speed_kts" in plane_info:
+                spd_kts = plane_info["speed_kts"]
+                spd_kmh = plane_info["speed_kmh"]
+                hdg = plane_info["heading_deg"]
+                vr = plane_info["vertical_rate_fpm"]
+                vr_str = f"+{vr}" if vr > 0 else f"{vr}"
+
+                print(f"    Yer Sürati  : {spd_kts} kts ({spd_kmh} km/h)")
+                print(f"    Rota / Yön  : {hdg}°")
+                print(f"    Dikey Hız   : {vr_str} ft/min")
+                
+            print()  # Her uçak paketinden sonra bir satır boşluk
 
 if __name__ == "__main__":
     main()
