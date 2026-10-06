@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Canlı ADS-B Radar Ekranı</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { width: 100vw; height: 100vh; background: #1a1a1a; }
+        .plane-icon {
+            font-size: 22px;
+            text-shadow: 0 0 4px #000;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Harita başlangıç merkezi (Marmara / İstanbul odaklı)
+        const map = L.map('map').setView([41.015, 28.979], 9);
+
+        // Koyu/Gece temalı harita katmanı
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+        const aircraftMarkers = {};
+
+        // Python backend'den her 1 saniyede bir güncel uçakları çeker
+        async function updateRadar() {
+            try {
+                const response = await fetch('/data');
+                const planes = await response.json();
+
+                planes.forEach(plane => {
+                    if (plane.lat && plane.lon) {
+                        const callsign = plane.callsign || "Bilinmiyor";
+                        const route = plane.route ? `${plane.route.origin} ➔ ${plane.route.destination}` : "Bilinmiyor";
+                        const alt = plane.altitude_ft ? plane.altitude_ft.toLocaleString() + " ft" : "N/A";
+                        const speed = plane.speed_kts ? plane.speed_kts + " kts" : "N/A";
+                        
+                        // Uçağın heading açısına göre simgeyi döndür
+                        const heading = plane.heading_deg || 0;
+                        const iconHtml = `<div class="plane-icon" style="transform: rotate(${heading}deg);">✈️</div>`;
+                        
+                        const customIcon = L.divIcon({
+                            className: 'custom-plane',
+                            html: iconHtml,
+                            iconSize: [24, 24],
+                            iconAnchor: [12, 12]
+                        });
+
+                        const popupContent = `
+                            <b>Uçak:</b> ${plane.icao} (${callsign})<br>
+                            <b>Rota:</b> ${route}<br>
+                            <b>İrtifa:</b> ${alt}<br>
+                            <b>Hız:</b> ${speed}<br>
+                            <b>Yön Açısı:</b> ${heading}°
+                        `;
+
+                        if (aircraftMarkers[plane.icao]) {
+                            // Var olan uçağın konumunu ve açısını güncelle
+                            aircraftMarkers[plane.icao].setLatLng([plane.lat, plane.lon]);
+                            aircraftMarkers[plane.icao].setIcon(customIcon);
+                            aircraftMarkers[plane.icao].getPopup().setContent(popupContent);
+                        } else {
+                            // Yeni uçak eklendiğinde haritada marker aç
+                            const marker = L.marker([plane.lat, plane.lon], { icon: customIcon })
+                                .bindPopup(popupContent)
+                                .addTo(map);
+                            aircraftMarkers[plane.icao] = marker;
+                        }
+                    }
+                });
+            } catch (err) {
+                console.error("Uçak verisi alınamadı:", err);
+            }
+        }
+
+        setInterval(updateRadar, 1000);
+        updateRadar();
+    </script>
+</body>
+</html>
