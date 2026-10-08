@@ -5,12 +5,23 @@
     <title>Canlı ADS-B Radar Ekranı</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; }
-        #map { width: 100vw; height: 100vh; background: #1a1a1a; }
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        #map { width: 100vw; height: 100vh; background: #121212; }
+        
+        .plane-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+        }
+
         .plane-icon {
-            font-size: 22px;
-            text-shadow: 0 0 4px #000;
+            font-size: 24px;
             display: inline-block;
+            filter: drop-shadow(0px 0px 5px rgba(0, 229, 255, 0.9));
+            transition: transform 0.4s ease-out;
+            user-select: none;
         }
     </style>
 </head>
@@ -19,65 +30,145 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Harita başlangıç merkezi (Marmara / İstanbul odaklı)
-        const map = L.map('map').setView([41.015, 28.979], 9);
+        // Harita Başlangıç Merkezi
+        const map = L.map('map').setView([41.015, 28.979], 10);
 
-        // Koyu/Gece temalı harita katmanı
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap contributors'
-}).addTo(map);
+        // Koyu Tema Katmanı
+        L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
 
         const aircraftMarkers = {};
+        const aircraftTrackGroups = {}; // Parçalı gradyan çizgilerini tutan grup
 
-        // Python backend'den her 1 saniyede bir güncel uçakları çeker
+        // İki koordinat noktası arasındaki coğrafi yön açısını (Pusula/Bearing) hesaplar
+        function calculateBearing(lat1, lon1, lat2, lon2) {
+            const toRad = Math.PI / 180;
+            const toDeg = 180 / Math.PI;
+            const phi1 = lat1 * toRad;
+            const phi2 = lat2 * toRad;
+            const deltaLambda = (lon2 - lon1) * toRad;
+
+            const y = Math.sin(deltaLambda) * Math.cos(phi2);
+            const x = Math.cos(phi1) * Math.sin(phi2) -
+                      Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+
+            let bearing = Math.atan2(y, x) * toDeg;
+            return (bearing + 360) % 360;
+        }
+
         async function updateRadar() {
             try {
                 const response = await fetch('/data');
                 const planes = await response.json();
+                const activeIcaos = new Set();
 
                 planes.forEach(plane => {
                     if (plane.lat && plane.lon) {
+                        activeIcaos.add(plane.icao);
+
                         const callsign = plane.callsign || "Bilinmiyor";
-                        const route = plane.route ? `${plane.route.origin} ➔ ${plane.route.destination}` : "Bilinmiyor";
+                        const route = plane.route && plane.route.origin ? `${plane.route.origin} ➔ ${plane.route.destination}` : "Bilinmiyor";
                         const alt = plane.altitude_ft ? plane.altitude_ft.toLocaleString() + " ft" : "N/A";
                         const speed = plane.speed_kts ? plane.speed_kts + " kts" : "N/A";
-                        
-                        // Uçağın heading açısına göre simgeyi döndür
-                        const heading = plane.heading_deg || 0;
-                        const iconHtml = `<div class="plane-icon" style="transform: rotate(${heading}deg);">✈️</div>`;
-                        
+
+                        // --- 1. AÇI VE İSTİKAMET HESABI ---
+                        // Eğer track geçmişi varsa, uçağın burnunu tam son çizginin aktığı yöne çevir
+                        let displayHeading = plane.heading_deg !== null ? plane.heading_deg : 0;
+                        if (plane.track && plane.track.length >= 2) {
+                            const pPrev = plane.track[plane.track.length - 2];
+                            const pCurr = plane.track[plane.track.length - 1];
+                            displayHeading = calculateBearing(pPrev[0], pPrev[1], pCurr[0], pCurr[1]);
+                        }
+
+                        // Uçak emojisi standart fontlarda genellikle 45° sağa yatıktır.
+                        // Burnu tam istikamete baksın diye -45° düzeltme ofseti uygularız:
+                        const correctedRotation = displayHeading - 45;
+
+                        const iconHtml = `
+                            <div class="plane-wrapper">
+                                <div class="plane-icon" style="transform: rotate(${correctedRotation}deg);">✈️</div>
+                            </div>
+                        `;
+
                         const customIcon = L.divIcon({
-                            className: 'custom-plane',
+                            className: 'custom-plane-container',
                             html: iconHtml,
-                            iconSize: [24, 24],
-                            iconAnchor: [12, 12]
+                            iconSize: [30, 30],
+                            iconAnchor: [15, 15]
                         });
 
                         const popupContent = `
-                            <b>Uçak:</b> ${plane.icao} (${callsign})<br>
-                            <b>Rota:</b> ${route}<br>
-                            <b>İrtifa:</b> ${alt}<br>
-                            <b>Hız:</b> ${speed}<br>
-                            <b>Yön Açısı:</b> ${heading}°
+                            <div style="font-size: 13px; line-height: 1.5;">
+                                <b style="color: #00e5ff; font-size: 14px;">✈️ ${callsign}</b> (${plane.icao})<br>
+                                <b>Rota:</b> ${route}<br>
+                                <b>İrtifa:</b> ${alt}<br>
+                                <b>Hız:</b> ${speed}<br>
+                                <b>Pusula Yönü:</b> ${Math.round(displayHeading)}°
+                            </div>
                         `;
 
+                        // Uçak İkonunu Yerleştir / Güncelle
                         if (aircraftMarkers[plane.icao]) {
-                            // Var olan uçağın konumunu ve açısını güncelle
                             aircraftMarkers[plane.icao].setLatLng([plane.lat, plane.lon]);
                             aircraftMarkers[plane.icao].setIcon(customIcon);
                             aircraftMarkers[plane.icao].getPopup().setContent(popupContent);
                         } else {
-                            // Yeni uçak eklendiğinde haritada marker aç
                             const marker = L.marker([plane.lat, plane.lon], { icon: customIcon })
                                 .bindPopup(popupContent)
                                 .addTo(map);
                             aircraftMarkers[plane.icao] = marker;
                         }
+
+                        // --- 2. TEK PARÇA VE SİLİKTEN KOYUYA GRADIENT İZ (FADE-OUT TRAIL) ---
+                        if (plane.track && plane.track.length > 1) {
+                            // Eski grup varsa temizle
+                            if (aircraftTrackGroups[plane.icao]) {
+                                aircraftTrackGroups[plane.icao].clearLayers();
+                            } else {
+                                aircraftTrackGroups[plane.icao] = L.featureGroup().addTo(map);
+                            }
+
+                            const group = aircraftTrackGroups[plane.icao];
+                            const pts = plane.track;
+                            const totalSegments = pts.length - 1;
+
+                            // Çizgiyi ardışık segmentlere bölerek uçağa doğru opaklığı ve kalınlığı artır
+                            for (let i = 0; i < totalSegments; i++) {
+                                const progress = (i + 1) / totalSegments; // 0.0'dan 1.0'a doğru artar
+                                
+                                // Başlangıçta 0.15 (çok silik), uçağın burnunun arkasında 0.95 (net/parlak)
+                                const segOpacity = 0.15 + (progress * 0.80);
+                                const segWeight = 2 + (progress * 2.5); // 2px'ten 4.5px'e doğru hafif kalınlaşır
+
+                                L.polyline([pts[i], pts[i + 1]], {
+                                    color: '#00e5ff',
+                                    weight: segWeight,
+                                    opacity: segOpacity,
+                                    lineCap: 'round',
+                                    lineJoin: 'round'
+                                }).addTo(group);
+                            }
+                        }
                     }
                 });
+
+                // Görüşten çıkan uçakların izlerini ve markerlarını temizle
+                for (const icao in aircraftMarkers) {
+                    if (!activeIcaos.has(icao)) {
+                        map.removeLayer(aircraftMarkers[icao]);
+                        delete aircraftMarkers[icao];
+
+                        if (aircraftTrackGroups[icao]) {
+                            map.removeLayer(aircraftTrackGroups[icao]);
+                            delete aircraftTrackGroups[icao];
+                        }
+                    }
+                }
+
             } catch (err) {
-                console.error("Uçak verisi alınamadı:", err);
+                console.error("Radar güncelleme hatası:", err);
             }
         }
 

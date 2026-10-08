@@ -30,6 +30,31 @@ callsign_route_cache = {}
 CHUNK_SAMPLES = 262144
 BYTES_PER_CHUNK = CHUNK_SAMPLES * 2
 
+def is_valid_position(lat: float, lon: float, last_lat: float = None, last_lon: float = None) -> bool:
+    """
+    1. Koordinat sınır kontrolü (-90/90, -180/180)
+    2. İstasyon Kapsama Filtresi (Marmara/Türkiye odaklı veya ~400 km yarıçap)
+    3. Hızlı Sıçrama Filtresi (Önceki konuma göre fiziksel olarak imkansız atlamaları eler)
+    """
+    if lat is None or lon is None:
+        return False
+
+    # Standart Dünya koordinat sınırları
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return False
+
+    # İstasyon Bölge Filtresi (Örn: Türkiye ve çevresi: 35°-43° Enlem, 25°-45° Boylam)
+    # RTL-SDR menzili en fazla 200-300 km olabileceğinden, Afrika'da veya Okyanusta çıkan gürültüyü eler
+    if not (35.0 <= lat <= 43.5 and 24.0 <= lon <= 45.0):
+        return False
+
+    # Uçak bir önceki konumundan bir anda 1-2 dereceden fazla zıplayamaz (~150 km)
+    if last_lat is not None and last_lon is not None:
+        delta = ((lat - last_lat)**2 + (lon - last_lon)**2) ** 0.5
+        if delta > 1.5:  # Anormal koordinat sıçraması
+            return False
+
+    return True
 
 def process_packet(bits: list[int]):
     plane_info = parse_df17(bits)
@@ -80,7 +105,23 @@ def process_packet(bits: list[int]):
         if entry["even"] and entry["odd"]:
             coords = decode_cpr_airborne(entry["even"], entry["odd"])
             if coords:
-                entry["lat"], entry["lon"] = coords
+                new_lat, new_lon = coords
+                
+                # --- KONUM FİLTRESİ KONTROLÜ ---
+                if is_valid_position(new_lat, new_lon, entry.get("lat"), entry.get("lon")):
+                    entry["lat"] = new_lat
+                    entry["lon"] = new_lon
+                    
+                    # --- UÇUŞ İZİ (TRACK) GEÇMİŞİNE EKLE ---
+                    if "track" not in entry:
+                        entry["track"] = []
+                    
+                    # Son eklenen noktayla birebir aynı değilse ekle
+                    if not entry["track"] or entry["track"][-1] != [new_lat, new_lon]:
+                        entry["track"].append([new_lat, new_lon])
+                        # Bellek şişmesin diye son 40 koordinatı tut (yeterince uzun bir iz)
+                        if len(entry["track"]) > 40:
+                            entry["track"].pop(0)
 
     # 3. Hız ve Rota Açısı (TC 19)
     elif msg_type == "Airborne Velocity":
@@ -132,11 +173,9 @@ def index():
 
 @app.route('/data')
 def get_data():
-    """Tarayıcının polling yapıp son 60 saniyede canlı olan uçakları aldığı API"""
     now = time.time()
     active_planes = []
 
-    # 60 saniyeden uzun süredir paket atmayan uçakları filtrele
     for plane in aircraft_db.values():
         if now - plane["last_seen"] < 60:
             active_planes.append({
@@ -147,7 +186,8 @@ def get_data():
                 "speed_kts": plane["speed_kts"],
                 "heading_deg": plane["heading_deg"],
                 "lat": plane["lat"],
-                "lon": plane["lon"]
+                "lon": plane["lon"],
+                "track": plane.get("track", [])  # <-- İz çizgisi noktaları
             })
 
     return jsonify(active_planes)
