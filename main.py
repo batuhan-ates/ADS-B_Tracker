@@ -2,8 +2,12 @@ import os
 import sys
 import threading
 import time
+import requests
 from flask import Flask, render_template, jsonify
 import numpy as np
+
+# Deno Deploy projenin adresi (dash.deno.com'daki sana verilen alan adı):
+DENO_DEPLOY_URL = "https://senin-proje-adin.deno.dev/api/update"
 
 # Windows DLL yol kontrolü
 if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
@@ -192,11 +196,47 @@ def get_data():
 
     return jsonify(active_planes)
 
+def cloud_uploader():
+    """Arka planda her 1 saniyede bir canlı uçakları Deno Deploy'a gönderir."""
+    print("[*] Deno Deploy bulut senkronizasyonu devrede...")
+    while True:
+        try:
+            now = time.time()
+            active_planes = []
+
+            # Son 60 saniyede canlı olan ve koordinatı çözülmüş uçakları topla
+            for plane in aircraft_db.values():
+                if now - plane.get("last_seen", 0) < 60 and plane.get("lat") and plane.get("lon"):
+                    active_planes.append({
+                        "icao": plane["icao"],
+                        "callsign": plane.get("callsign"),
+                        "route": plane.get("route"),
+                        "altitude_ft": plane.get("altitude_ft"),
+                        "speed_kts": plane.get("speed_kts"),
+                        "heading_deg": plane.get("heading_deg"),
+                        "lat": plane["lat"],
+                        "lon": plane["lon"],
+                        "track": plane.get("track", [])
+                    })
+
+            # Eğer havada aktif uçak varsa Deno Deploy'a POST at
+            if active_planes:
+                requests.post(DENO_DEPLOY_URL, json=active_planes, timeout=1.5)
+
+        except Exception:
+            # İnternet anlık gitse veya gecikse bile SDR donanım akışını asla kilitleme
+            pass
+
+        time.sleep(1.0)
 
 if __name__ == '__main__':
-    # SDR'ı arka planda bir thread olarak koştur
+    # 1. RTL-SDR arka plan iş parçacığı
     thread = threading.Thread(target=sdr_stream_worker, daemon=True)
     thread.start()
+
+    # 2. Deno Deploy bulut aktarım iş parçacığı (BU İKİ SATIRI EKLE)
+    thread_cloud = threading.Thread(target=cloud_uploader, daemon=True)
+    thread_cloud.start()
 
     # Flask sunucusunu ayağa kaldır
     print("[+] Web Haritası Hazır: http://127.0.0.1:8080 adresini tarayıcında açabilirsin.\n")
