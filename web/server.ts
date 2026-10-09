@@ -1,17 +1,18 @@
-// server.ts
+// web/server.ts
 declare const Deno: any;
 
-let latestPlanes: any[] = [];
-let lastUpdate = 0;
+// Deno'nun ortak bulut hafızasını açıyoruz (tüm sunucular aynı hafızayı görür)
+const kv = await Deno.openKv();
 
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
 
-  // 1. Python'dan canlı uçak verisini al (POST /api/update)
+  // 1. Python'dan gelen uçakları ortak bulut hafızasına yaz (POST /api/update)
   if (req.method === "POST" && url.pathname === "/api/update") {
     try {
-      latestPlanes = await req.json();
-      lastUpdate = Date.now();
+      const planes = await req.json();
+      await kv.set(["planes"], planes);
+      await kv.set(["lastUpdate"], Date.now());
       return new Response(JSON.stringify({ status: "ok" }), {
         headers: { "Content-Type": "application/json" }
       });
@@ -20,9 +21,15 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // 2. Tarayıcıdaki Leaflet haritasına veriyi ver (GET /data)
+  // 2. Tarayıcıya ortak hafızadaki uçakları ver (GET /data)
   if (url.pathname === "/data") {
-    const planes = (Date.now() - lastUpdate < 30000) ? latestPlanes : [];
+    const planesRes = await kv.get(["planes"]);
+    const lastUpdateRes = await kv.get(["lastUpdate"]);
+
+    const lastUpdate = (lastUpdateRes.value as number) || 0;
+    // 30 saniyeden eskiyse boş döndür, yeniyse uçakları ver
+    const planes = (Date.now() - lastUpdate < 30000) ? (planesRes.value || []) : [];
+
     return new Response(JSON.stringify(planes), {
       headers: {
         "Content-Type": "application/json",
@@ -31,10 +38,9 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // 3. Ana sayfada index.html'i sun (GET /)
+  // 3. index.html'i sun (GET /)
   if (url.pathname === "/" || url.pathname === "/index.html") {
     try {
-      // server.ts ile aynı klasördeki index.html'i kesin konumundan oku:
       const htmlUrl = new URL("./index.html", import.meta.url);
       const html = await Deno.readTextFile(htmlUrl);
       return new Response(html, {
