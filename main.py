@@ -7,7 +7,7 @@ from flask import Flask, render_template, jsonify
 import numpy as np
 
 # Deno Deploy projenin adresi (dash.deno.com'daki sana verilen alan adı):
-DENO_DEPLOY_URL = "https://senin-proje-adin.deno.dev/api/update"
+DENO_DEPLOY_URL = "https://ads-b-tracker.batuhan-ates.deno.net/api/update"
 
 # Windows DLL yol kontrolü
 if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
