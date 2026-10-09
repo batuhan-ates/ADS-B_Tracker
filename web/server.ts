@@ -1,12 +1,9 @@
 // server.ts
-
-// VS Code'a Deno küresel değişkenini tanıtıyoruz:
 declare const Deno: any;
 
 let latestPlanes: any[] = [];
 let lastUpdate = 0;
 
-// req parametresine Request tipini veriyoruz:
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
 
@@ -36,10 +33,16 @@ Deno.serve(async (req: Request) => {
 
   // 3. Ana sayfada index.html'i sun (GET /)
   if (url.pathname === "/" || url.pathname === "/index.html") {
-    const html = await Deno.readTextFile("./index.html");
-    return new Response(html, {
-      headers: { "Content-Type": "text/html; charset=utf-8" }
-    });
+    try {
+      // server.ts ile aynı klasördeki index.html'i kesin konumundan oku:
+      const htmlUrl = new URL("./index.html", import.meta.url);
+      const html = await Deno.readTextFile(htmlUrl);
+      return new Response(html, {
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      });
+    } catch (err) {
+      return new Response("index.html okunamadı: " + err, { status: 500 });
+    }
   }
 
   return new Response("Not Found", { status: 404 });
