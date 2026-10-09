@@ -197,8 +197,8 @@ def get_data():
     return jsonify(active_planes)
 
 def cloud_uploader():
-    """Arka planda her 1 saniyede bir canlı uçakları Deno Deploy'a gönderir."""
-    print("[*] Deno Deploy bulut senkronizasyonu devrede...")
+    """Arka planda canlı uçakları Deno Deploy'a gönderir."""
+    print("[*] Deno Deploy bulut aktarımı devrede...")
     while True:
         try:
             now = time.time()
@@ -219,13 +219,18 @@ def cloud_uploader():
                         "track": plane.get("track", [])
                     })
 
-            # Eğer havada aktif uçak varsa Deno Deploy'a POST at
+            # Havada koordinatı olan uçak varsa gönder
             if active_planes:
-                requests.post(DENO_DEPLOY_URL, json=active_planes, timeout=1.5)
+                # 1. Önce isteği at ve cevabı resp değişkenine ata:
+                resp = requests.post(DENO_DEPLOY_URL, json=active_planes, timeout=2.5)
+                # 2. Sonra cevabı ekrana yazdır:
+                print(f"[*] Deno Bulut: {len(active_planes)} uçak yollandı (HTTP {resp.status_code})")
+            else:
+                # Koordinatlı aktif uçak henüz yoksa bekle
+                pass
 
-        except Exception:
-            # İnternet anlık gitse veya gecikse bile SDR donanım akışını asla kilitleme
-            pass
+        except Exception as e:
+            print(f"[-] Deno Aktarım Hatası: {e}")
 
         time.sleep(1.0)
 
