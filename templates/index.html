@@ -2,20 +2,39 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Canlı ADS-B Radar Ekranı</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        #map { width: 100vw; height: 100vh; background: #121212; }
-        
+        * { box-sizing: border-box; }
+        body { 
+            margin: 0; 
+            padding: 0; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #12161a;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+        #map { 
+            width: 100vw; 
+            height: 100vh; 
+            background: #12161a; 
+        }
+
+        /* GECE MODU: OSM karolarını API Key istemeden temiz koyu temaya çevirir */
+        body.dark-mode .leaflet-tile-pane {
+            filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+        }
+
+        /* Uçak Simgesi ve Parıltı Efekti */
         .plane-wrapper {
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 30px;
-            height: 30px;
+            width: 32px;
+            height: 32px;
+            cursor: pointer;
         }
-
         .plane-icon {
             font-size: 24px;
             display: inline-block;
@@ -23,26 +42,132 @@
             transition: transform 0.4s ease-out;
             user-select: none;
         }
+
+        /* Güneş / Ay Tema Butonu */
+        #theme-toggle-btn {
+            position: absolute;
+            top: 20px;
+            left: 60px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(0, 0, 0, 0.2);
+            border-radius: 50%;
+            width: 42px;
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            cursor: pointer;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: all 0.2s ease-in-out;
+            user-select: none;
+        }
+        #theme-toggle-btn:hover {
+            transform: scale(1.1);
+        }
+        body.dark-mode #theme-toggle-btn {
+            background: rgba(24, 30, 40, 0.9);
+            border-color: #00e5ff;
+            box-shadow: 0 0 10px rgba(0, 229, 255, 0.4);
+        }
+
+        /* Sürüklenebilir Uçak Bilgi Kutusu */
+        #plane-info-card {
+            display: none;
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 250px;
+            background: rgba(18, 24, 32, 0.92);
+            border: 1px solid #00e5ff;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(6px);
+            z-index: 1000;
+            user-select: none;
+        }
+        #plane-info-header {
+            padding: 8px 12px;
+            background: rgba(0, 229, 255, 0.15);
+            border-bottom: 1px solid rgba(0, 229, 255, 0.3);
+            border-top-left-radius: 7px;
+            border-top-right-radius: 7px;
+            cursor: move;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: bold;
+            color: #00e5ff;
+        }
+        #plane-info-close {
+            cursor: pointer;
+            color: #aaa;
+            font-size: 18px;
+            line-height: 1;
+        }
+        #plane-info-close:hover {
+            color: #fff;
+        }
+        #plane-info-body {
+            padding: 12px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: #d1d5db;
+        }
+        #plane-info-body b {
+            color: #fff;
+        }
     </style>
 </head>
 <body>
     <div id="map"></div>
 
+    <!-- Güneş / Ay Teması Butonu -->
+    <div id="theme-toggle-btn" title="Karanlık / Aydınlık Mod" onclick="toggleMapTheme()">🌙</div>
+
+    <!-- Sürüklenebilir Uçak Bilgi Kutusu -->
+    <div id="plane-info-card">
+        <div id="plane-info-header">
+            <span id="card-callsign">✈️ Uçak Bilgisi</span>
+            <span id="plane-info-close" onclick="closeInfoCard()">&times;</span>
+        </div>
+        <div id="plane-info-body">
+            <div><b>ICAO:</b> <span id="card-icao">-</span></div>
+            <div><b>Rota:</b> <span id="card-route">-</span></div>
+            <div><b>İrtifa:</b> <span id="card-alt">-</span></div>
+            <div><b>Hız:</b> <span id="card-speed">-</span></div>
+            <div><b>Pusula Yönü:</b> <span id="card-heading">-</span></div>
+        </div>
+    </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Harita Başlangıç Merkezi
-        const map = L.map('map').setView([41.015, 28.979], 10);
+        const map = L.map('map').setView([41.015, 28.979], 9);
 
-        // Koyu Tema Katmanı
-        L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', {
+        // Stabil, sınırsız ve resmi OpenStreetMap katmanı
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
-            attribution: '© OpenStreetMap contributors'
+            attribution: '&copy; OpenStreetMap contributors'
         }).addTo(map);
 
-        const aircraftMarkers = {};
-        const aircraftTrackGroups = {}; // Parçalı gradyan çizgilerini tutan grup
+        let isDarkMode = false;
+        function toggleMapTheme() {
+            const btn = document.getElementById('theme-toggle-btn');
+            isDarkMode = !isDarkMode;
+            if (isDarkMode) {
+                document.body.classList.add('dark-mode');
+                btn.innerText = '☀️';
+            } else {
+                document.body.classList.remove('dark-mode');
+                btn.innerText = '🌙';
+            }
+        }
 
-        // İki koordinat noktası arasındaki coğrafi yön açısını (Pusula/Bearing) hesaplar
+        const aircraftMarkers = {};
+        const aircraftTrackGroups = {};
+        let selectedIcao = null;
+
         function calculateBearing(lat1, lon1, lat2, lon2) {
             const toRad = Math.PI / 180;
             const toDeg = 180 / Math.PI;
@@ -58,6 +183,29 @@
             return (bearing + 360) % 360;
         }
 
+        function openInfoCard(plane, displayHeading) {
+            selectedIcao = plane.icao;
+            const card = document.getElementById('plane-info-card');
+            const callsign = plane.callsign || "Bilinmiyor";
+            const route = (plane.route && plane.route.origin) ? `${plane.route.origin} ➔ ${plane.route.destination}` : "Bilinmiyor";
+            const alt = plane.altitude_ft ? plane.altitude_ft.toLocaleString() + " ft" : "N/A";
+            const speed = plane.speed_kts ? plane.speed_kts + " kts" : "N/A";
+
+            document.getElementById('card-callsign').innerText = `✈️ ${callsign}`;
+            document.getElementById('card-icao').innerText = plane.icao;
+            document.getElementById('card-route').innerText = route;
+            document.getElementById('card-alt').innerText = alt;
+            document.getElementById('card-speed').innerText = speed;
+            document.getElementById('card-heading').innerText = `${Math.round(displayHeading)}°`;
+
+            card.style.display = 'block';
+        }
+
+        function closeInfoCard() {
+            document.getElementById('plane-info-card').style.display = 'none';
+            selectedIcao = null;
+        }
+
         async function updateRadar() {
             try {
                 const response = await fetch('/data');
@@ -68,13 +216,6 @@
                     if (plane.lat && plane.lon) {
                         activeIcaos.add(plane.icao);
 
-                        const callsign = plane.callsign || "Bilinmiyor";
-                        const route = plane.route && plane.route.origin ? `${plane.route.origin} ➔ ${plane.route.destination}` : "Bilinmiyor";
-                        const alt = plane.altitude_ft ? plane.altitude_ft.toLocaleString() + " ft" : "N/A";
-                        const speed = plane.speed_kts ? plane.speed_kts + " kts" : "N/A";
-
-                        // --- 1. AÇI VE İSTİKAMET HESABI ---
-                        // Eğer track geçmişi varsa, uçağın burnunu tam son çizginin aktığı yöne çevir
                         let displayHeading = plane.heading_deg !== null ? plane.heading_deg : 0;
                         if (plane.track && plane.track.length >= 2) {
                             const pPrev = plane.track[plane.track.length - 2];
@@ -82,10 +223,7 @@
                             displayHeading = calculateBearing(pPrev[0], pPrev[1], pCurr[0], pCurr[1]);
                         }
 
-                        // Uçak emojisi standart fontlarda genellikle 45° sağa yatıktır.
-                        // Burnu tam istikamete baksın diye -45° düzeltme ofseti uygularız:
                         const correctedRotation = displayHeading - 45;
-
                         const iconHtml = `
                             <div class="plane-wrapper">
                                 <div class="plane-icon" style="transform: rotate(${correctedRotation}deg);">✈️</div>
@@ -95,35 +233,24 @@
                         const customIcon = L.divIcon({
                             className: 'custom-plane-container',
                             html: iconHtml,
-                            iconSize: [30, 30],
-                            iconAnchor: [15, 15]
+                            iconSize: [32, 32],
+                            iconAnchor: [16, 16]
                         });
 
-                        const popupContent = `
-                            <div style="font-size: 13px; line-height: 1.5;">
-                                <b style="color: #00e5ff; font-size: 14px;">✈️ ${callsign}</b> (${plane.icao})<br>
-                                <b>Rota:</b> ${route}<br>
-                                <b>İrtifa:</b> ${alt}<br>
-                                <b>Hız:</b> ${speed}<br>
-                                <b>Pusula Yönü:</b> ${Math.round(displayHeading)}°
-                            </div>
-                        `;
-
-                        // Uçak İkonunu Yerleştir / Güncelle
                         if (aircraftMarkers[plane.icao]) {
                             aircraftMarkers[plane.icao].setLatLng([plane.lat, plane.lon]);
                             aircraftMarkers[plane.icao].setIcon(customIcon);
-                            aircraftMarkers[plane.icao].getPopup().setContent(popupContent);
                         } else {
-                            const marker = L.marker([plane.lat, plane.lon], { icon: customIcon })
-                                .bindPopup(popupContent)
-                                .addTo(map);
+                            const marker = L.marker([plane.lat, plane.lon], { icon: customIcon }).addTo(map);
+                            marker.on('click', () => openInfoCard(plane, displayHeading));
                             aircraftMarkers[plane.icao] = marker;
                         }
 
-                        // --- 2. TEK PARÇA VE SİLİKTEN KOYUYA GRADIENT İZ (FADE-OUT TRAIL) ---
+                        if (selectedIcao === plane.icao) {
+                            openInfoCard(plane, displayHeading);
+                        }
+
                         if (plane.track && plane.track.length > 1) {
-                            // Eski grup varsa temizle
                             if (aircraftTrackGroups[plane.icao]) {
                                 aircraftTrackGroups[plane.icao].clearLayers();
                             } else {
@@ -134,13 +261,10 @@
                             const pts = plane.track;
                             const totalSegments = pts.length - 1;
 
-                            // Çizgiyi ardışık segmentlere bölerek uçağa doğru opaklığı ve kalınlığı artır
                             for (let i = 0; i < totalSegments; i++) {
-                                const progress = (i + 1) / totalSegments; // 0.0'dan 1.0'a doğru artar
-                                
-                                // Başlangıçta 0.15 (çok silik), uçağın burnunun arkasında 0.95 (net/parlak)
+                                const progress = (i + 1) / totalSegments;
                                 const segOpacity = 0.15 + (progress * 0.80);
-                                const segWeight = 2 + (progress * 2.5); // 2px'ten 4.5px'e doğru hafif kalınlaşır
+                                const segWeight = 2 + (progress * 2.5);
 
                                 L.polyline([pts[i], pts[i + 1]], {
                                     color: '#00e5ff',
@@ -154,7 +278,6 @@
                     }
                 });
 
-                // Görüşten çıkan uçakların izlerini ve markerlarını temizle
                 for (const icao in aircraftMarkers) {
                     if (!activeIcaos.has(icao)) {
                         map.removeLayer(aircraftMarkers[icao]);
@@ -164,13 +287,42 @@
                             map.removeLayer(aircraftTrackGroups[icao]);
                             delete aircraftTrackGroups[icao];
                         }
+
+                        if (selectedIcao === icao) {
+                            closeInfoCard();
+                        }
                     }
                 }
-
             } catch (err) {
                 console.error("Radar güncelleme hatası:", err);
             }
         }
+
+        // Sürükle Bırak Mantığı
+        const card = document.getElementById("plane-info-card");
+        const header = document.getElementById("plane-info-header");
+        let isDragging = false;
+        let offsetX = 0, offsetY = 0;
+
+        header.addEventListener("mousedown", (e) => {
+            isDragging = true;
+            offsetX = e.clientX - card.offsetLeft;
+            offsetY = e.clientY - card.offsetTop;
+            document.body.style.userSelect = "none";
+        });
+
+        document.addEventListener("mousemove", (e) => {
+            if (isDragging) {
+                card.style.left = (e.clientX - offsetX) + "px";
+                card.style.top = (e.clientY - offsetY) + "px";
+                card.style.right = "auto";
+            }
+        });
+
+        document.addEventListener("mouseup", () => {
+            isDragging = false;
+            document.body.style.userSelect = "auto";
+        });
 
         setInterval(updateRadar, 1000);
         updateRadar();
